@@ -14,8 +14,10 @@ wav_filepath=$1
 # by default use greedy decoder
 # use greedy decoder to speed up decode time: https://github.com/ggerganov/whisper.cpp/issues/2241
 greedy="-bs 1"
+decoder="greedy"
 if [ -z "$2" ]; then
     greedy=""
+    decoder="beam"
 fi
 
 models=(                                                                                                    \
@@ -26,8 +28,8 @@ models=(                                                                        
   "large-v2" "large-v2-q4_0" "large-v2-q4_1" "large-v2-q5_0" "large-v2-q5_1" "large-v2-q8_0" "large-v2-dis" \
 )
 
-printf "| %6s | %6s | %16s | %13s | %3s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s |\n" "CPU" "OS" "Config" "Model" "Th" "Load" "Enc." "Dec." "Dec.Run" "Bch5" "PP" "Total" "Mem." "Commit"
-printf "| %6s | %6s | %16s | %13s | %3s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s |\n" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---"
+printf "| %6s | %6s | %6s | %16s | %13s | %3s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s |\n" "Decoder" "CPU" "OS" "Config" "Model" "Th" "Load" "Enc." "Dec." "Dec.Run" "Bch5" "PP" "Total" "Mem." "Commit"
+printf "| %6s | %6s | %6s | %16s | %13s | %3s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s |\n" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---" "---"
 
 for model in "${models[@]}"; do
     # actual run
@@ -83,6 +85,6 @@ for model in "${models[@]}"; do
     commit=$(git rev-parse --short HEAD)
 
     if [ $ret -eq 0 ]; then
-        printf "| <todo> | <todo> | %16s | %13s | %3s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s |\n" "$config" "$model" "$n_threads" "$load_time" "$encode_time" "$decode_time" "$decode_times" "$batchd_time" "$prompt_time" "$total_time" "$mem_usage" "$commit"
+        printf "| %6s | <todo> | <todo> | %16s | %13s | %3s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s | %7s |\n" "$decoder" "$config" "$model" "$n_threads" "$load_time" "$encode_time" "$decode_time" "$decode_times" "$batchd_time" "$prompt_time" "$total_time" "$mem_usage" "$commit"
     fi
 done

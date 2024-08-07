@@ -711,7 +711,14 @@ if (MSVC)
 
     set(WHISPER_EXTRA_FLAGS ${WHISPER_EXTRA_FLAGS} -D_CRT_SECURE_NO_WARNINGS)
 else()
-    target_link_libraries(${TARGET} PRIVATE m ${WHISPER_EXTRA_LIBS} ${CMAKE_THREAD_LIBS_INIT})
+    target_link_libraries(${TARGET} PRIVATE ${WHISPER_EXTRA_LIBS} ${CMAKE_THREAD_LIBS_INIT})
+endif()
+
+find_library(MATH_LIBRARY m)
+if (MATH_LIBRARY)
+    if (NOT WIN32)
+        target_link_libraries(${TARGET} PRIVATE ${MATH_LIBRARY})
+    endif()
 endif()
 
 if (BUILD_SHARED_LIBS)

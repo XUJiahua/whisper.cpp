@@ -112,8 +112,6 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -lpt N,    --logprob-thold N   [%-7.2f] log probability threshold for decoder fail\n",   params.logprob_thold);
     fprintf(stderr, "  -debug,    --debug-mode        [%-7s] enable debug mode (eg. dump log_mel)\n",           params.debug_mode ? "true" : "false");
     fprintf(stderr, "  -tr,       --translate         [%-7s] translate from source language to english\n",      params.translate ? "true" : "false");
-    fprintf(stderr, "  -di,       --diarize           [%-7s] stereo audio diarization\n",                       params.diarize ? "true" : "false");
-    fprintf(stderr, "  -tdrz,     --tinydiarize       [%-7s] enable tinydiarize (requires a tdrz model)\n",     params.tinydiarize ? "true" : "false");
     fprintf(stderr, "  -nf,       --no-fallback       [%-7s] do not use temperature fallback while decoding\n", params.no_fallback ? "true" : "false");
     fprintf(stderr, "  -ps,       --print-special     [%-7s] print special tokens\n",                           params.print_special ? "true" : "false");
     fprintf(stderr, "  -pc,       --print-colors      [%-7s] print colors\n",                                   params.print_colors ? "true" : "false");
@@ -158,8 +156,6 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
         else if (arg == "-lpt"  || arg == "--logprob-thold")   { params.logprob_thold   = std::stof(argv[++i]); }
         else if (arg == "-debug"|| arg == "--debug-mode")      { params.debug_mode      = true; }
         else if (arg == "-tr"   || arg == "--translate")       { params.translate       = true; }
-        else if (arg == "-di"   || arg == "--diarize")         { params.diarize         = true; }
-        else if (arg == "-tdrz" || arg == "--tinydiarize")     { params.tinydiarize     = true; }
         else if (arg == "-sow"  || arg == "--split-on-word")   { params.split_on_word   = true; }
         else if (arg == "-nf"   || arg == "--no-fallback")     { params.no_fallback     = true; }
         else if (arg == "-fp"   || arg == "--font-path")       { params.font_path       = argv[++i]; }
@@ -269,10 +265,6 @@ void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper
             printf("[%s --> %s]  ", to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
         }
 
-        if (params.diarize && pcmf32s.size() == 2) {
-            speaker = estimate_diarization_speaker(pcmf32s, t0, t1);
-        }
-
         if (params.print_colors) {
             for (int j = 0; j < whisper_full_n_tokens(ctx, i); ++j) {
                 if (params.print_special == false) {
@@ -315,13 +307,6 @@ std::string output_str(struct whisper_context * ctx, const whisper_params & para
     for (int i = 0; i < n_segments; ++i) {
         const char * text = whisper_full_get_segment_text(ctx, i);
         std::string speaker = "";
-
-        if (params.diarize && pcmf32s.size() == 2)
-        {
-            const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
-            const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
-            speaker = estimate_diarization_speaker(pcmf32s, t0, t1);
-        }
 
         result << speaker << text << "\n";
     }
@@ -389,14 +374,6 @@ void get_req_parameters(const Request & req, whisper_params & params)
     {
         params.translate = parse_str_to_bool(req.get_file_value("translate").content);
     }
-    if (req.has_file("diarize"))
-    {
-        params.diarize = parse_str_to_bool(req.get_file_value("diarize").content);
-    }
-    if (req.has_file("tinydiarize"))
-    {
-        params.tinydiarize = parse_str_to_bool(req.get_file_value("tinydiarize").content);
-    }
     if (req.has_file("split_on_word"))
     {
         params.split_on_word = parse_str_to_bool(req.get_file_value("split_on_word").content);
@@ -446,12 +423,6 @@ int main(int argc, char ** argv) {
 
     if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1) {
         fprintf(stderr, "error: unknown language '%s'\n", params.language.c_str());
-        whisper_print_usage(argc, argv, params, sparams);
-        exit(0);
-    }
-
-    if (params.diarize && params.tinydiarize) {
-        fprintf(stderr, "error: cannot use both --diarize and --tinydiarize\n");
         whisper_print_usage(argc, argv, params, sparams);
         exit(0);
     }
@@ -773,11 +744,6 @@ int main(int argc, char ** argv) {
                 const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
                 std::string speaker = "";
 
-                if (params.diarize && pcmf32s.size() == 2)
-                {
-                    speaker = estimate_diarization_speaker(pcmf32s, t0, t1);
-                }
-
                 ss << i + 1 + params.offset_n << "\n";
                 ss << to_timestamp(t0, true) << " --> " << to_timestamp(t1, true) << "\n";
                 ss << speaker << text << "\n\n";
@@ -794,13 +760,6 @@ int main(int argc, char ** argv) {
                 const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
                 const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
                 std::string speaker = "";
-
-                if (params.diarize && pcmf32s.size() == 2)
-                {
-                    speaker = estimate_diarization_speaker(pcmf32s, t0, t1, true);
-                    speaker.insert(0, "<v Speaker");
-                    speaker.append(">");
-                }
 
                 ss << to_timestamp(t0) << " --> " << to_timestamp(t1) << "\n";
                 ss << speaker << text << "\n\n";

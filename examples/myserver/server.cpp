@@ -36,7 +36,7 @@ struct server_params
     std::string request_path = "";
     std::string inference_path = "/inference";
 
-    int32_t port          = 8080;
+    int32_t port          = 0;
     int32_t read_timeout  = 600;
     int32_t write_timeout = 600;
 };
@@ -905,18 +905,23 @@ int main(int argc, char ** argv) {
     svr.set_read_timeout(sparams.read_timeout);
     svr.set_write_timeout(sparams.write_timeout);
 
-    if (!svr.bind_to_port(sparams.hostname, sparams.port))
-    {
-        fprintf(stderr, "\ncouldn't bind to server socket: hostname=%s port=%d\n\n",
+    int port = sparams.port;
+    if (sparams.port == 0) {
+        port = svr.bind_to_any_port(sparams.hostname);
+    } else {
+        if (!svr.bind_to_port(sparams.hostname, sparams.port))
+        {
+            fprintf(stderr, "\ncouldn't bind to server socket: hostname=%s port=%d\n\n",
                 sparams.hostname.c_str(), sparams.port);
-        return 1;
+            return 1;
+        }
     }
 
     // Set the base directory for serving static files
     svr.set_base_dir(sparams.public_path);
 
     // to make it ctrl+clickable:
-    printf("\nwhisper server listening at http://%s:%d\n\n", sparams.hostname.c_str(), sparams.port);
+    printf("\nwhisper server listening at http://%s:%d\n\n", sparams.hostname.c_str(), port);
 
     if (!svr.listen_after_bind())
     {

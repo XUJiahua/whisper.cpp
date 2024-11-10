@@ -191,7 +191,6 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
 struct whisper_print_user_data {
     const whisper_params * params;
 
-    const std::vector<std::vector<float>> * pcmf32s;
     int progress_prev;
 };
 
@@ -641,7 +640,7 @@ int main(int argc, char ** argv) {
             wparams.no_timestamps    = params.no_timestamps;
             wparams.token_timestamps = !params.no_timestamps && params.response_format == vjson_format;
 
-            whisper_print_user_data user_data = { &params, &pcmf32s, 0 };
+            whisper_print_user_data user_data = { &params, 0 };
 
             // this callback is called on each new segment
             if (params.print_realtime) {

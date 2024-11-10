@@ -921,7 +921,7 @@ int main(int argc, char ** argv) {
     svr.set_base_dir(sparams.public_path);
 
     // to make it ctrl+clickable:
-    printf("\nwhisper server listening at http://%s:%d\n\n", sparams.hostname.c_str(), port);
+    fprintf(stderr, "\nwhisper server listening at http://%s:%d\n\n", sparams.hostname.c_str(), port);
 
     if (!svr.listen_after_bind())
     {

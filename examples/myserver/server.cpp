@@ -39,8 +39,6 @@ struct server_params
     int32_t port          = 8080;
     int32_t read_timeout  = 600;
     int32_t write_timeout = 600;
-
-    bool ffmpeg_converter = false;
 };
 
 struct whisper_params {
@@ -134,7 +132,6 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  --public PATH,                 [%-7s] Path to the public folder\n", sparams.public_path.c_str());
     fprintf(stderr, "  --request-path PATH,           [%-7s] Request path for all requests\n", sparams.request_path.c_str());
     fprintf(stderr, "  --inference-path PATH,         [%-7s] Inference path for all requests\n", sparams.inference_path.c_str());
-    fprintf(stderr, "  --convert,                     [%-7s] Convert audio to WAV, requires ffmpeg on the server", sparams.ffmpeg_converter ? "true" : "false");
     fprintf(stderr, "\n");
 }
 
@@ -185,7 +182,6 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
         else if (                  arg == "--public")          { sparams.public_path = argv[++i]; }
         else if (                  arg == "--request-path")    { sparams.request_path = argv[++i]; }
         else if (                  arg == "--inference-path")  { sparams.inference_path = argv[++i]; }
-        else if (                  arg == "--convert")         { sparams.ffmpeg_converter     = true; }
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             whisper_print_usage(argc, argv, params, sparams);
@@ -202,45 +198,6 @@ struct whisper_print_user_data {
     const std::vector<std::vector<float>> * pcmf32s;
     int progress_prev;
 };
-
-void check_ffmpeg_availibility() {
-    int result = system("ffmpeg -version");
-
-    if (result == 0) {
-        std::cout << "ffmpeg is available." << std::endl;
-    } else {
-        // ffmpeg is not available
-        std::cout << "ffmpeg is not found. Please ensure that ffmpeg is installed ";
-        std::cout << "and that its executable is included in your system's PATH. ";
-        exit(0);
-    }
-}
-
-bool convert_to_wav(const std::string & temp_filename, std::string & error_resp) {
-    std::ostringstream cmd_stream;
-    std::string converted_filename_temp = temp_filename + "_temp.wav";
-    cmd_stream << "ffmpeg -i \"" << temp_filename << "\" -y -ar 16000 -ac 1 -c:a pcm_s16le \"" << converted_filename_temp << "\" 2>&1";
-    std::string cmd = cmd_stream.str();
-
-    int status = std::system(cmd.c_str());
-    if (status != 0) {
-        error_resp = "{\"error\":\"FFmpeg conversion failed.\"}";
-        return false;
-    }
-
-    // Remove the original file
-    if (remove(temp_filename.c_str()) != 0) {
-        error_resp = "{\"error\":\"Failed to remove the original file.\"}";
-        return false;
-    }
-
-    // Rename the temporary file to match the original filename
-    if (rename(converted_filename_temp.c_str(), temp_filename.c_str()) != 0) {
-        error_resp = "{\"error\":\"Failed to rename the temporary file.\"}";
-        return false;
-    }
-    return true;
-}
 
 std::string estimate_diarization_speaker(std::vector<std::vector<float>> pcmf32s, int64_t t0, int64_t t1, bool id_only = false) {
     std::string speaker = "";
@@ -499,9 +456,6 @@ int main(int argc, char ** argv) {
         exit(0);
     }
 
-    if (sparams.ffmpeg_converter) {
-        check_ffmpeg_availibility();
-    }
     // whisper init
     struct whisper_context_params cparams = whisper_context_default_params();
 
@@ -674,34 +628,6 @@ int main(int argc, char ** argv) {
         std::vector<float> pcmf32;               // mono-channel F32 PCM
         std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
 
-        if (sparams.ffmpeg_converter) {
-            // if file is not wav, convert to wav
-            // write to temporary file
-            const std::string temp_filename_base = std::tmpnam(nullptr);
-            const std::string temp_filename = temp_filename_base + ".wav";
-            std::ofstream temp_file{temp_filename, std::ios::binary};
-            temp_file << audio_file.content;
-            temp_file.close();
-
-            std::string error_resp = "{\"error\":\"Failed to execute ffmpeg command.\"}";
-            const bool is_converted = convert_to_wav(temp_filename, error_resp);
-            if (!is_converted) {
-                res.set_content(error_resp, "application/json");
-                return;
-            }
-
-            // read wav content into pcmf32
-            if (!::read_wav(temp_filename, pcmf32, pcmf32s, params.diarize))
-            {
-                fprintf(stderr, "error: failed to read WAV file '%s'\n", temp_filename.c_str());
-                const std::string error_resp = "{\"error\":\"failed to read WAV file\"}";
-                res.set_content(error_resp, "application/json");
-                std::remove(temp_filename.c_str());
-                return;
-            }
-            // remove temp file
-            std::remove(temp_filename.c_str());
-        } else {
             if (!::read_wav(audio_file.content, pcmf32, pcmf32s, params.diarize))
             {
                 fprintf(stderr, "error: failed to read WAV file\n");
@@ -709,7 +635,6 @@ int main(int argc, char ** argv) {
                 res.set_content(error_resp, "application/json");
                 return;
             }
-        }
 
 
         printf("Successfully loaded %s\n", filename.c_str());

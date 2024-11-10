@@ -301,14 +301,12 @@ void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper
     }
 }
 
-std::string output_str(struct whisper_context * ctx, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
+std::string output_str(struct whisper_context * ctx, const whisper_params & params) {
     std::stringstream result;
     const int n_segments = whisper_full_n_segments(ctx);
     for (int i = 0; i < n_segments; ++i) {
         const char * text = whisper_full_get_segment_text(ctx, i);
-        std::string speaker = "";
-
-        result << speaker << text << "\n";
+        result << text << "\n";
     }
     return result.str();
 }
@@ -731,7 +729,7 @@ int main(int argc, char ** argv) {
         // return results to user
         if (params.response_format == text_format)
         {
-            std::string results = output_str(ctx, params, pcmf32s);
+            std::string results = output_str(ctx, params);
             res.set_content(results.c_str(), "text/html; charset=utf-8");
         }
         else if (params.response_format == srt_format)
@@ -767,7 +765,7 @@ int main(int argc, char ** argv) {
             res.set_content(ss.str(), "text/vtt");
         } else if (params.response_format == vjson_format) {
             /* try to match openai/whisper's Python format */
-            std::string results = output_str(ctx, params, pcmf32s);
+            std::string results = output_str(ctx, params);
             json jres = json{
                 {"task", params.translate ? "translate" : "transcribe"},
                 {"language", whisper_lang_str_full(whisper_full_lang_id(ctx))},
@@ -823,7 +821,7 @@ int main(int argc, char ** argv) {
         // TODO add more output formats
         else
         {
-            std::string results = output_str(ctx, params, pcmf32s);
+            std::string results = output_str(ctx, params);
             json jres = json{
                 {"text", results}
             };

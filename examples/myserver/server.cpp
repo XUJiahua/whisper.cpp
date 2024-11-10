@@ -239,7 +239,6 @@ void whisper_print_progress_callback(struct whisper_context * /*ctx*/, struct wh
 
 void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper_state * /*state*/, int n_new, void * user_data) {
     const auto & params  = *((whisper_print_user_data *) user_data)->params;
-    const auto & pcmf32s = *((whisper_print_user_data *) user_data)->pcmf32s;
 
     const int n_segments = whisper_full_n_segments(ctx);
 
@@ -285,12 +284,6 @@ void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper
             const char * text = whisper_full_get_segment_text(ctx, i);
 
             printf("%s%s", speaker.c_str(), text);
-        }
-
-        if (params.tinydiarize) {
-            if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
-                printf("%s", params.tdrz_speaker_turn.c_str());
-            }
         }
 
         // with timestamps or speakers: each segment on new line
@@ -594,6 +587,7 @@ int main(int argc, char ** argv) {
         printf("Received request: %s\n", filename.c_str());
 
         // audio arrays
+        // todo: load float array from request
         std::vector<float> pcmf32;               // mono-channel F32 PCM
         std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
 

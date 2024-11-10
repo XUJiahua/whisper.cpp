@@ -367,7 +367,54 @@ void get_req_parameters(const Request & req, whisper_params & params)
 
 }  // namespace
 
+std::string base64_decode(const std::string& encoded) {
+    const std::string base64_chars = 
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+
+    std::string decoded;
+    int val = 0, valb = -8;
+    
+    for (char c : encoded) {
+        if (c == '=') break;
+        
+        if (c > 127 || c < 0) continue;
+        
+        if (base64_chars.find(c) == std::string::npos) continue;
+        
+        val = (val << 6) + base64_chars.find(c);
+        valb += 6;
+        
+        if (valb >= 0) {
+            decoded.push_back(char((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    
+    return decoded;
+}
+
+std::vector<float> base64_decode_to_float_array(const std::string& encoded) {
+    std::string decoded = base64_decode(encoded);
+    std::vector<float> pcmf32;
+    pcmf32.resize(decoded.size() / sizeof(float));
+    std::memcpy(pcmf32.data(), decoded.data(), decoded.size());
+    return pcmf32;
+}
+
 int main(int argc, char ** argv) {
+    // auto a = base64_decode_to_float_array("AAAAAAAAAAAAAAAAAAAAAA==");
+    // for (auto f : a) {
+    //     printf("%f\n", f);
+    // }
+
+    // auto b = base64_decode_to_float_array("w/VIQKRwLUBGthM/oBrPPw==");
+    // for (auto f : b) {
+    //     printf("%f\n", f);
+    // }
+    // return 0;
+
     whisper_params params;
     server_params sparams;
 
@@ -553,14 +600,14 @@ int main(int argc, char ** argv) {
         printf("Received request: %s\n", filename.c_str());
 
         // audio arrays
-        // todo: load float array from request
         std::vector<float> pcmf32;               // mono-channel F32 PCM
         std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
 
-        if (!::read_wav(audio_file.content, pcmf32, pcmf32s, false))
-        {
-            fprintf(stderr, "error: failed to read WAV file\n");
-            const std::string error_resp = "{\"error\":\"failed to read WAV file\"}";
+        try {
+            pcmf32 = base64_decode_to_float_array(audio_file.content);
+        } catch (const std::exception& e) {
+            fprintf(stderr, "error: failed to decode base64 audio file: %s\n", e.what());
+            const std::string error_resp = "{\"error\":\"failed to decode base64 audio file\"}";
             res.set_content(error_resp, "application/json");
             return;
         }

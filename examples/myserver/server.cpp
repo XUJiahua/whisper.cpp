@@ -599,13 +599,13 @@ int main(int argc, char ** argv) {
         std::vector<float> pcmf32;               // mono-channel F32 PCM
         std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
 
-            if (!::read_wav(audio_file.content, pcmf32, pcmf32s, params.diarize))
-            {
-                fprintf(stderr, "error: failed to read WAV file\n");
-                const std::string error_resp = "{\"error\":\"failed to read WAV file\"}";
-                res.set_content(error_resp, "application/json");
-                return;
-            }
+        if (!::read_wav(audio_file.content, pcmf32, pcmf32s, false))
+        {
+            fprintf(stderr, "error: failed to read WAV file\n");
+            const std::string error_resp = "{\"error\":\"failed to read WAV file\"}";
+            res.set_content(error_resp, "application/json");
+            return;
+        }
 
 
         printf("Successfully loaded %s\n", filename.c_str());

@@ -472,11 +472,8 @@ jobs:
           cuda: '${{ matrix.cuda-toolkit }}'
 
       - name: Configure
-        run: >
-          cmake -S . -B ./build -A ${{ matrix.arch }}
-          -DCMAKE_BUILD_TYPE=${{ matrix.build }}
-          -DGGML_CUDA=${{ matrix.cublas }}
-          -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.cuda-arch }}
+        run: |
+          cmake -S . -B ./build -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DGGML_CUDA=${{ matrix.cublas }} -DCMAKE_CUDA_ARCHITECTURES="${{ matrix.cuda-arch }}"
 
       - name: Build ${{ matrix.cuda-toolkit }}
         run: |

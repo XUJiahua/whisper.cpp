@@ -452,6 +452,10 @@ jobs:
         sdl2: [ON]
         cuda-toolkit: [12.4.0, 11.3.1]
         include:
+          - cuda-toolkit: 12.4.0
+            cuda-arch: 60;61;62;70;72;75;80;86;87;89;90;90a
+          - cuda-toolkit: 11.3.1
+            cuda-arch: 50;52;53;60;61;62;70;72;75;80;86
           - arch: x64
             s2arc: x64
           - sdl2: ON
@@ -483,7 +487,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build }}
           -DGGML_CUDA=${{ matrix.cublas }}
           -DWHISPER_SDL2=${{ matrix.sdl2 }}
-
+          -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.cuda-arch }}
       - name: Build ${{ matrix.cuda-toolkit }}
         run: |
           cd ./build

@@ -1,0 +1,99 @@
+name: CI
+on: [push]
+
+jobs:
+  windows-cublas:
+    runs-on: windows-2019
+
+    strategy:
+      matrix:
+        build: [Release]
+        arch: [x64]
+        cublas: [ON]
+        cuda-toolkit: [12.4.0, 11.3.1]
+        include:
+          - cuda-toolkit: 12.4.0
+            cuda-arch: "60;61;62;70;72;75;80;86;87;89;90;90a"
+          - cuda-toolkit: 11.3.1
+            cuda-arch: "50;52;53;60;61;62;70;72;75;80;86"
+          - arch: x64
+            s2arc: x64
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install CUDA Toolkit
+        id: cuda-toolkit
+        uses: Jimver/cuda-toolkit@v0.2.15
+        with:
+          cuda: '${{ matrix.cuda-toolkit }}'
+
+      - name: Configure
+        run: |
+          cmake -S . -B ./build -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DGGML_CUDA=${{ matrix.cublas }} -DCMAKE_CUDA_ARCHITECTURES="${{ matrix.cuda-arch }}"
+
+      - name: Build ${{ matrix.cuda-toolkit }}
+        run: |
+          cd ./build
+          cmake --build . --config ${{ matrix.build }}
+
+      - name: Copy CUDA DLLs
+        run: >
+          Copy-Item -PassThru
+          -Path "${{ steps.cuda-toolkit.outputs.CUDA_PATH }}/bin/*.dll"
+          -Include cudart64_*,cublas64_*,cublasLt64_*
+          -Destination build/bin/${{ matrix.build }}
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cublas-${{ matrix.cuda-toolkit }}-bin-${{ matrix.arch }}
+          path: build/bin/${{ matrix.build }}
+
+  windows-hipblas:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        build: [Release]
+        arch: [x64]
+    steps:
+      - name: Clone
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Install
+        id: depends
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "Downloading AMD HIP SDK Installer"
+          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
+          write-host "Installing AMD HIP SDK"
+          Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
+          write-host "Completed AMD HIP SDK installation"
+
+      - name: Verify ROCm
+        id: verify
+        run: |
+          & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
+
+      - name: Build
+        id: cmake_build
+        run: |
+          $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
+          $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
+          cmake -G "Unix Makefiles" -B build -S . -DCMAKE_C_COMPILER="${env:HIP_PATH}\bin\clang.exe" -DCMAKE_CXX_COMPILER="${env:HIP_PATH}\bin\clang++.exe" -DGGML_HIPBLAS=ON -DCMAKE_BUILD_TYPE=Release -DAMDGPU_TARGETS="gfx900;gfx940;gfx941;gfx942;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102"
+          cmake --build build -j ${env:NUMBER_OF_PROCESSORS}
+          md "build\bin\rocblas\library\"
+          cp "${env:HIP_PATH}\bin\hipblas.dll" "build\bin\"
+          cp "${env:HIP_PATH}\bin\rocblas.dll" "build\bin\"
+          cp "${env:HIP_PATH}\bin\rocblas\library\*" "build\bin\rocblas\library\"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-hipblas-bin-${{ matrix.arch }}
+          path: build/bin

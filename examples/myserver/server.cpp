@@ -415,7 +415,7 @@ int main(int argc, char ** argv) {
     whisper_params params;
     server_params sparams;
 
-    std::mutex whisper_mutex;
+    std::mutex model_mutex;
 
     if (whisper_params_parse(argc, argv, params, sparams) == false) {
         whisper_print_usage(argc, argv, params, sparams);
@@ -534,7 +534,7 @@ int main(int argc, char ** argv) {
 
     svr.Post(sparams.request_path + sparams.inference_path, [&](const Request &req, Response &res){
         // acquire whisper model mutex lock
-        std::lock_guard<std::mutex> lock(whisper_mutex);
+        std::lock_guard<std::mutex> lock(model_mutex);
 
         // first check user requested fields of the request
         if (!req.has_file("file"))
@@ -792,7 +792,7 @@ int main(int argc, char ** argv) {
         params = default_params;
     });
     svr.Post(sparams.request_path + "/load", [&](const Request &req, Response &res){
-        std::lock_guard<std::mutex> lock(whisper_mutex);
+        std::lock_guard<std::mutex> lock(model_mutex);
         if (!req.has_file("model"))
         {
             fprintf(stderr, "error: no 'model' field in the request\n");

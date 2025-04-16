@@ -664,8 +664,9 @@ int main(int argc, char ** argv) {
         } else if (params.response_format == vjson_format) {
             /* try to match openai/whisper's Python format */
             json jres = json{
-                {"duration", float(pcmf32.size())/SENSE_VOICE_SAMPLE_RATE},
-                {"text", results},
+                {"language", ""},
+                // {"duration", float(pcmf32.size())/SENSE_VOICE_SAMPLE_RATE},
+                // {"text", results},
                 {"segments", json::array()}
             };
             for (int i = 0; i < 1; ++i)
@@ -676,7 +677,7 @@ int main(int argc, char ** argv) {
 
                 if (!params.no_timestamps) {
                     segment["start"] = 0;
-                    segment["end"] = 0;
+                    segment["end"] = float(pcmf32.size())/SENSE_VOICE_SAMPLE_RATE;
                 }
 
                 jres["segments"].push_back(segment);

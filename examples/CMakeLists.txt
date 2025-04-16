@@ -89,6 +89,10 @@ endif()
 add_library(json_cpp INTERFACE)
 target_include_directories(json_cpp INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# add http lib
+add_library(httplib INTERFACE)
+target_include_directories(httplib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/server)
+
 # examples
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -105,6 +109,7 @@ else()
     add_subdirectory(bench)
     add_subdirectory(server)
     add_subdirectory(myserver)
+    add_subdirectory(myserver-sv)
     add_subdirectory(quantize)
     if (WHISPER_SDL2)
         add_subdirectory(stream)

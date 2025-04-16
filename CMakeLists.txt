@@ -197,3 +197,6 @@ endif ()
 if (WHISPER_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
+
+add_subdirectory("../SenseVoice.cpp/sense-voice" 
+                 "${CMAKE_BINARY_DIR}/sense-voice")

@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Clone
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v2
@@ -64,6 +66,8 @@ jobs:
       - name: Clone
         id: checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install
         id: depends

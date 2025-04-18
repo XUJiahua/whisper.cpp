@@ -1,0 +1,4 @@
+[submodule "SenseVoice.cpp"]
+	path = SenseVoice.cpp
+	url = https://github.com/XUJiahua/SenseVoice.cpp.git
+    branch = myserver

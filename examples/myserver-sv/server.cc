@@ -660,7 +660,7 @@ int main(int argc, char ** argv) {
             }
         }
 
-        std::string results = sense_voice_get_output(ctx, true, params.use_itn, false);
+        std::string results = sense_voice_get_output(ctx, true, params.use_itn, true);
         results = std::regex_replace(results, special_tag_regex, "");
 
         // return results to user

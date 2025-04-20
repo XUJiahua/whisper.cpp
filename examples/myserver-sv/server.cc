@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -439,6 +440,9 @@ std::vector<float> base64_decode_to_float_array(const std::string& encoded) {
 
 
 int main(int argc, char ** argv) {
+    // 清理特殊标记，如 <|zh|>、<|HAPPY|>、<|Speech|>、<|withitn|> 等
+    std::regex special_tag_regex("<\\|[^\\|]*\\|>");
+
     sense_voice_params params;
     server_params sparams;
 
@@ -657,6 +661,8 @@ int main(int argc, char ** argv) {
         }
 
         std::string results = sense_voice_get_output(ctx, true, params.use_itn, false);
+        results = std::regex_replace(results, special_tag_regex, "");
+
         // return results to user
         if (params.response_format == text_format)
         {

@@ -28,13 +28,22 @@ jobs:
           brew update
           brew install sdl2 cmake
 
+      - name: Check Compiler Version
+        run: |
+          clang --version
+          xcodebuild -version
+          cmake --version
+
       # build for both arm64 and x86_64
       - name: Build
         run: |
           sysctl -a
           cmake -B build -G Xcode \
             -DGGML_METAL_USE_BF16=ON \
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_CXX_STANDARD_REQUIRED=ON
+
           cmake --build build --config ${{ matrix.build }} -j $(sysctl -n hw.logicalcpu)
       - name: Upload binaries
         uses: actions/upload-artifact@v4
@@ -72,7 +81,7 @@ jobs:
         id: cuda-toolkit
         uses: Jimver/cuda-toolkit@v0.2.23
         with:
-          cuda: '${{ matrix.cuda-toolkit }}'
+          cuda: "${{ matrix.cuda-toolkit }}"
 
       - name: Configure
         run: |

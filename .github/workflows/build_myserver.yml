@@ -41,6 +41,7 @@ jobs:
           cmake -B build -G Xcode \
             -DGGML_METAL_USE_BF16=ON \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_CXX_STANDARD=17 \
             -DCMAKE_CXX_STANDARD_REQUIRED=ON
 

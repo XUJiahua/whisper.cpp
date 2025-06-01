@@ -48,10 +48,10 @@ jobs:
         build: [Release]
         arch: [x64]
         cublas: [ON]
-        cuda-toolkit: [12.4.0, 11.3.1]
+        cuda-toolkit: [12.8.1, 11.3.1]
         include:
-          - cuda-toolkit: 12.4.0
-            cuda-arch: "60;61;62;70;72;75;80;86;87;89;90;90a"
+          - cuda-toolkit: 12.8.1
+            cuda-arch: "60;61;62;70;72;75;80;86;87;89;90;90a;120"
           - cuda-toolkit: 11.3.1
             cuda-arch: "50;52;53;60;61;62;70;72;75;80;86"
           - arch: x64
@@ -68,7 +68,7 @@ jobs:
 
       - name: Install CUDA Toolkit
         id: cuda-toolkit
-        uses: Jimver/cuda-toolkit@v0.2.15
+        uses: Jimver/cuda-toolkit@v0.2.23
         with:
           cuda: '${{ matrix.cuda-toolkit }}'
 

@@ -2,8 +2,8 @@ name: CI
 on: [push]
 
 jobs:
-  macOS-latest:
-    runs-on: macOS-latest
+  macOS:
+    runs-on: macos-15
 
     strategy:
       matrix:

@@ -2,6 +2,44 @@ name: CI
 on: [push]
 
 jobs:
+  macOS-latest:
+    runs-on: macOS-latest
+
+    strategy:
+      matrix:
+        build: [Release]
+        destination: ["generic/platform=macOS"]
+
+    steps:
+      - name: Clone
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.16
+        with:
+          key: macOS-latest-swift
+          evict-old-files: 1d
+
+      - name: Dependencies
+        run: |
+          brew update
+          brew install sdl2 cmake
+
+      # build for both arm64 and x86_64
+      - name: Build
+        run: |
+          sysctl -a
+          cmake -B build -G Xcode \
+            -DGGML_METAL_USE_BF16=ON \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake --build build --config ${{ matrix.build }} -j $(sysctl -n hw.logicalcpu)
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-macOS-bin
+          path: build/bin/${{ matrix.build }}
+
   windows-cublas:
     runs-on: windows-2019
 

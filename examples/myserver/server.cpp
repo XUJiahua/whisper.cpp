@@ -478,8 +478,14 @@ whisper_full_params stdio_make_wparams(const whisper_params & params) {
     return wparams;
 }
 
-json stdio_transcribe(struct whisper_context * ctx, const whisper_params & params,
-                      const std::string & wav_path) {
+json stdio_transcribe(struct whisper_context * ctx, whisper_params params,
+                      const std::string & wav_path, const std::string & prompt) {
+    // 按请求覆盖 initial_prompt（params 是**按值**传的，不污染下一次请求）。
+    // 没有这个通道的话，切到 stdio 就等于把 whisper 的 initial_prompt 能力砍掉 ——
+    // 传输层迁移不该丢功能。
+    if (!prompt.empty()) {
+        params.prompt = prompt;
+    }
     std::vector<float> pcmf32;
     std::vector<std::vector<float>> pcmf32s;
     if (!read_audio_data(wav_path, pcmf32, pcmf32s, /*stereo=*/false)) {
@@ -541,10 +547,17 @@ int stdio_main(struct whisper_context * ctx, whisper_params & params) {
         if (line.empty()) continue;
         if (line == "quit") break;
 
-        // 行协议是 tab 分隔：`<cmd>\t<wav>`。只取第一个 tab，路径里可能含空格但不含 tab。
+        // 行协议是 tab 分隔：`<cmd>\t<wav>[\t<prompt>]`。路径里可能含空格但不含 tab。
+        // 第三字段可选 —— 老客户端只发两个字段时 prompt 为空，行为与之前一致。
         const size_t tab = line.find('\t');
         const std::string cmd  = tab == std::string::npos ? line : line.substr(0, tab);
-        const std::string rest = tab == std::string::npos ? ""   : line.substr(tab + 1);
+        std::string rest       = tab == std::string::npos ? ""   : line.substr(tab + 1);
+        std::string prompt;
+        const size_t tab2 = rest.find('\t');
+        if (tab2 != std::string::npos) {
+            prompt = rest.substr(tab2 + 1);
+            rest   = rest.substr(0, tab2);
+        }
 
         json reply;
         if (cmd != STDIO_CMD_SEGMENTS) {
@@ -552,7 +565,7 @@ int stdio_main(struct whisper_context * ctx, whisper_params & params) {
         } else if (rest.empty()) {
             reply = json{{"error", "missing wav path"}};
         } else {
-            reply = stdio_transcribe(ctx, params, rest);
+            reply = stdio_transcribe(ctx, params, rest, prompt);
         }
 
         // 回复恒为**一行** JSON —— 客户端把 BEGIN..END 之间的所有行 join("\n") 后

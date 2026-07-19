@@ -9,10 +9,22 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
+
+// stdio 模式要把真正的 stdout 抢救出来（见 stdio_main）——只用到 dup/dup2。
+#if defined(_WIN32)
+#include <io.h>
+#define WSRV_DUP  _dup
+#define WSRV_DUP2 _dup2
+#else
+#include <unistd.h>
+#define WSRV_DUP  dup
+#define WSRV_DUP2 dup2
+#endif
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -40,6 +52,10 @@ struct server_params
     int32_t port          = 0;
     int32_t read_timeout  = 600;
     int32_t write_timeout = 600;
+
+    // --stdio：不起 HTTP 服务，改走 stdin/stdout 行协议（见 stdio_main）。
+    // 与 fa-asr / mlx-asr-daemon 同款协议，让所有本地 ASR 引擎统一由 StdioWhisper 驱动。
+    bool stdio = false;
 };
 
 struct whisper_params {
@@ -128,6 +144,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  --public PATH,                 [%-7s] Path to the public folder\n", sparams.public_path.c_str());
     fprintf(stderr, "  --request-path PATH,           [%-7s] Request path for all requests\n", sparams.request_path.c_str());
     fprintf(stderr, "  --inference-path PATH,         [%-7s] Inference path for all requests\n", sparams.inference_path.c_str());
+    fprintf(stderr, "  --stdio,                       [%-7s] stdin/stdout line protocol instead of HTTP\n", sparams.stdio ? "true" : "false");
     fprintf(stderr, "\n");
 }
 
@@ -175,6 +192,7 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
         else if (                  arg == "--public")          { sparams.public_path = argv[++i]; }
         else if (                  arg == "--request-path")    { sparams.request_path = argv[++i]; }
         else if (                  arg == "--inference-path")  { sparams.inference_path = argv[++i]; }
+        else if (                  arg == "--stdio")           { sparams.stdio          = true; }
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             whisper_print_usage(argc, argv, params, sparams);
@@ -400,6 +418,154 @@ std::vector<float> base64_decode_to_float_array(const std::string& encoded) {
     return pcmf32;
 }
 
+// ── stdio 行协议 ─────────────────────────────────────────────────────────────
+//
+// 与 fa-asr / mlx-asr-daemon 同款，客户端是 lwt-core 的 StdioWhisper。协议：
+//   启动完成 → stdout 打印 READY 哨兵
+//   请求      → stdin 一行：`transcribe_segments\t<wav 路径>`，或 `quit`
+//   回复      → BEGIN 哨兵 / 一行 JSON / END 哨兵
+//
+// **为什么加第三个命令而不是复用 transcribe_timed**：后者回 token 级时间戳，客户端
+// 用 words_to_segments() 按词间静音重新推导段边界 —— 那会把 whisper 自己按标点/语义
+// 切好的段结构丢掉。这里直接回 {segments,language}，与 HTTP 的 verbose_json 同源，
+// 客户端一次 serde 反序列化即可，段边界原样保留。
+const std::string STDIO_READY = "__MTMD_DAEMON_READY__";
+const std::string STDIO_BEGIN = "__MTMD_BEGIN__";
+const std::string STDIO_END   = "__MTMD_END__";
+const std::string STDIO_CMD_SEGMENTS = "transcribe_segments";
+
+// 与 HTTP handler 里那段 wparams 设置逐字段对齐。刻意抽成独立函数而不是重构 handler：
+// HTTP 路径保持**零改动**，等价性才能靠「同一批音频两边输出逐字节一致」来证明。
+whisper_full_params stdio_make_wparams(const whisper_params & params) {
+    whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+
+    wparams.strategy = params.beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY;
+
+    wparams.print_realtime   = false;
+    wparams.print_progress   = false;   // 进度走 stderr 也没意义，客户端不读
+    wparams.print_timestamps = !params.no_timestamps;
+    wparams.print_special    = params.print_special;
+    wparams.translate        = params.translate;
+    wparams.language         = params.language.c_str();
+    wparams.detect_language  = params.detect_language;
+    wparams.n_threads        = params.n_threads;
+    wparams.n_max_text_ctx   = params.max_context >= 0 ? params.max_context : wparams.n_max_text_ctx;
+    wparams.offset_ms        = params.offset_t_ms;
+    wparams.duration_ms      = params.duration_ms;
+
+    wparams.thold_pt         = params.word_thold;
+    wparams.max_len          = params.max_len == 0 ? 60 : params.max_len;
+    wparams.split_on_word    = params.split_on_word;
+    wparams.audio_ctx        = params.audio_ctx;
+
+    wparams.debug_mode       = params.debug_mode;
+    wparams.tdrz_enable      = params.tinydiarize;
+    wparams.initial_prompt   = params.prompt.c_str();
+
+    wparams.greedy.best_of        = params.best_of;
+    wparams.beam_search.beam_size = params.beam_size;
+
+    wparams.temperature      = params.temperature;
+    wparams.temperature_inc  = params.temperature_inc;
+    wparams.entropy_thold    = params.entropy_thold;
+    wparams.logprob_thold    = params.logprob_thold;
+
+    wparams.no_timestamps    = params.no_timestamps;
+    // HTTP 侧是 `!no_timestamps && response_format == vjson_format`；stdio 只有一种输出
+    // 形态（等价于 vjson），所以后半个条件恒真。
+    wparams.token_timestamps = !params.no_timestamps;
+
+    return wparams;
+}
+
+json stdio_transcribe(struct whisper_context * ctx, const whisper_params & params,
+                      const std::string & wav_path) {
+    std::vector<float> pcmf32;
+    std::vector<std::vector<float>> pcmf32s;
+    if (!read_audio_data(wav_path, pcmf32, pcmf32s, /*stereo=*/false)) {
+        return json{{"error", "failed to read audio: " + wav_path}};
+    }
+
+    whisper_full_params wparams = stdio_make_wparams(params);
+    if (whisper_full_parallel(ctx, wparams, pcmf32.data(), pcmf32.size(), params.n_processors) != 0) {
+        return json{{"error", "failed to process audio"}};
+    }
+
+    // 时间戳单位与 HTTP 的 verbose_json 一致：whisper 的 t0/t1 是厘秒，×0.01 → 秒。
+    json segments = json::array();
+    const int n_segments = whisper_full_n_segments(ctx);
+    for (int i = 0; i < n_segments; ++i) {
+        segments.push_back(json{
+            {"start", whisper_full_get_segment_t0(ctx, i) * 0.01},
+            {"end",   whisper_full_get_segment_t1(ctx, i) * 0.01},
+            {"text",  whisper_full_get_segment_text(ctx, i)},
+        });
+    }
+    return json{
+        {"segments", segments},
+        {"language", whisper_lang_str_full(whisper_full_lang_id(ctx))},
+    };
+}
+
+int stdio_main(struct whisper_context * ctx, whisper_params & params) {
+    // ⚠️ 把真正的 stdout 抢救出来，然后让所有 printf 改道 stderr。
+    //
+    // 这个文件里的进度信息（"Running whisper.cpp inference on …"、"Received request: …"）
+    // 以及 whisper.cpp 内部的部分输出都走 stdout。stdio 模式下 stdout 就是协议通道 ——
+    // 漏进去一行，客户端要么把它当框架噪音丢掉（BEGIN 之前），要么把它当成转写内容的一部分
+    // （BEGIN..END 之间）。后者是静默的数据损坏，排查起来极难。
+    // 与其逐个改 printf（还挡不住库内部的），不如从 fd 层面一次堵死。
+    fflush(stdout);
+    const int proto_fd = WSRV_DUP(fileno(stdout));
+    if (proto_fd < 0) {
+        fprintf(stderr, "stdio: failed to dup stdout\n");
+        return 1;
+    }
+    WSRV_DUP2(fileno(stderr), fileno(stdout));
+    FILE * proto = fdopen(proto_fd, "w");
+    if (proto == nullptr) {
+        fprintf(stderr, "stdio: failed to fdopen the saved stdout\n");
+        return 1;
+    }
+
+    auto emit = [&](const std::string & line) {
+        fprintf(proto, "%s\n", line.c_str());
+        fflush(proto);
+    };
+
+    emit(STDIO_READY);
+
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();   // 容忍 CRLF
+        if (line.empty()) continue;
+        if (line == "quit") break;
+
+        // 行协议是 tab 分隔：`<cmd>\t<wav>`。只取第一个 tab，路径里可能含空格但不含 tab。
+        const size_t tab = line.find('\t');
+        const std::string cmd  = tab == std::string::npos ? line : line.substr(0, tab);
+        const std::string rest = tab == std::string::npos ? ""   : line.substr(tab + 1);
+
+        json reply;
+        if (cmd != STDIO_CMD_SEGMENTS) {
+            reply = json{{"error", "unsupported command: " + cmd}};
+        } else if (rest.empty()) {
+            reply = json{{"error", "missing wav path"}};
+        } else {
+            reply = stdio_transcribe(ctx, params, rest);
+        }
+
+        // 回复恒为**一行** JSON —— 客户端把 BEGIN..END 之间的所有行 join("\n") 后
+        // 交给 serde，多行会破坏解析。
+        emit(STDIO_BEGIN);
+        emit(reply.dump());
+        emit(STDIO_END);
+    }
+
+    fclose(proto);
+    return 0;
+}
+
 int main(int argc, char ** argv) {
     // auto a = base64_decode_to_float_array("AAAAAAAAAAAAAAAAAAAAAA==");
     // for (auto f : a) {
@@ -443,6 +609,15 @@ int main(int argc, char ** argv) {
 
     // initialize openvino encoder. this has no effect on whisper.cpp builds that don't have OpenVINO configured
     whisper_ctx_init_openvino_encoder(ctx, nullptr, params.openvino_encode_device.c_str(), nullptr);
+
+    // --stdio：走行协议，整个 HTTP 服务器（含 /inference、/load、静态页）都不创建。
+    // 放在模型加载**之后** —— READY 哨兵的语义就是「模型已就绪，可以收请求了」，
+    // 客户端 StdioWhisper::new 会一直等到它才返回。
+    if (sparams.stdio) {
+        const int rc = stdio_main(ctx, params);
+        whisper_free(ctx);
+        return rc;
+    }
 
     Server svr;
     svr.set_default_headers({{"Server", "whisper.cpp"},

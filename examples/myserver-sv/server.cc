@@ -1,4 +1,5 @@
 #include "common.h"
+#include "common-whisper.h"   // read_audio_data —— stdio 模式按路径收音频
 #include "sense-voice.h"
 #include "httplib.h"
 #include "json.hpp"
@@ -12,6 +13,18 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+// stdio 模式要把真正的 stdout 抢救出来（见 stdio_main）——只用到 dup/dup2。
+#if defined(_WIN32)
+#include <io.h>
+#define SVSRV_DUP  _dup
+#define SVSRV_DUP2 _dup2
+#else
+#include <unistd.h>
+#define SVSRV_DUP  dup
+#define SVSRV_DUP2 dup2
+#endif
+#include <iostream>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -29,6 +42,10 @@ const std::string vtt_format    = "vtt";
 
 struct server_params
 {
+    // --stdio：不起 HTTP 服务，改走 stdin/stdout 行协议（见 stdio_main）。
+    // 与 myserver / fa-asr / mlx-asr-daemon 同款，让所有本地 ASR 引擎统一由 StdioWhisper 驱动。
+    bool stdio = false;
+
     std::string hostname = "127.0.0.1";
     std::string public_path = "examples/server/public";
     std::string request_path = "";
@@ -195,6 +212,7 @@ static void sense_voice_print_usage(int /*argc*/, char ** argv, const sense_voic
     fprintf(stderr, "  --public PATH,                 [%-7s] Path to the public folder\n", sparams.public_path.c_str());
     fprintf(stderr, "  --request-path PATH,           [%-7s] Request path for all requests\n", sparams.request_path.c_str());
     fprintf(stderr, "  --inference-path PATH,         [%-7s] Inference path for all requests\n", sparams.inference_path.c_str());
+    fprintf(stderr, "  --stdio,                       [%-7s] stdin/stdout line protocol instead of HTTP\n", sparams.stdio ? "true" : "false");
 }
 
 struct sense_voice_print_user_data {
@@ -282,6 +300,7 @@ static bool sense_voice_params_parse(int argc, char ** argv, sense_voice_params 
         else if (                  arg == "--public")          { sparams.public_path = argv[++i]; }
         else if (                  arg == "--request-path")    { sparams.request_path = argv[++i]; }
         else if (                  arg == "--inference-path")  { sparams.inference_path = argv[++i]; }
+        else if (                  arg == "--stdio")           { sparams.stdio          = true; }
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             sense_voice_print_usage(argc, argv, params, sparams);
@@ -439,6 +458,125 @@ std::vector<float> base64_decode_to_float_array(const std::string& encoded) {
 }
 
 
+// ── stdio 行协议 ─────────────────────────────────────────────────────────────
+//
+// 与 myserver / fa-asr / mlx-asr-daemon 同款，客户端是 lwt-core 的 StdioWhisper。
+//   启动完成 → stdout 打印 READY 哨兵
+//   请求      → stdin 一行：`transcribe\t<wav 路径>[\t<prompt>]`，或 `quit`
+//   回复      → BEGIN 哨兵 / 转写文本 / END 哨兵
+//
+// **用 `transcribe`（Plain 模式）而不是 `transcribe_segments`。** SenseVoice 没有真正的
+// 段级时间戳 —— HTTP 侧的 verbose_json 也只造一个 `start=0, end=整段时长` 的段
+// （server.cc 的 vjson 分支，for 循环写死 i<1）。若谎称 Segments，客户端的
+// supports_long_audio() 会返回 true，文件转录就会撤掉 VAD，而它恰恰需要 VAD 切分。
+// catalog 里的 forceVad: true 说的就是这件事。
+//
+// prompt 字段照收但**不用** —— 这不是遗漏：params.prompt 在 HTTP 路径上同样是
+// 「解析了就丢」（全文件搜 .prompt 只有 usage / argv / form 三处，从不进 wparams）。
+// 保留解析只为与协议一致，能力侧由 catalog 的 StdioSpec.prompt=false 如实声明。
+const std::string STDIO_READY = "__MTMD_DAEMON_READY__";
+const std::string STDIO_BEGIN = "__MTMD_BEGIN__";
+const std::string STDIO_END   = "__MTMD_END__";
+const std::string STDIO_CMD   = "transcribe";
+
+// 与 HTTP handler 里那段 wparams 设置逐字段对齐。刻意抽成独立函数而不是重构 handler：
+// HTTP 路径保持零改动，等价性才能靠「同一批音频两条协议输出对比」来证明。
+//
+// 返回空串 = 无转写（静音）或失败；失败细节打到 stderr。Plain 模式的回复就是裸文本，
+// 没有错误通道 —— 把错误信息当回复发出去会被客户端当成转写内容，那是静默的数据损坏。
+std::string sv_stdio_transcribe(struct sense_voice_context * ctx, const sense_voice_params & params,
+                                const std::string & wav_path) {
+    std::vector<float> pcmf32;
+    std::vector<std::vector<float>> pcmf32s;
+    if (!read_audio_data(wav_path, pcmf32, pcmf32s, /*stereo=*/false)) {
+        fprintf(stderr, "stdio: failed to read audio: %s\n", wav_path.c_str());
+        return "";
+    }
+
+    sense_voice_full_params wparams = sense_voice_full_default_params(SENSE_VOICE_SAMPLING_GREEDY);
+    wparams.strategy = (params.beam_size > 1) ? SENSE_VOICE_SAMPLING_BEAM_SEARCH : SENSE_VOICE_SAMPLING_GREEDY;
+    wparams.print_progress   = false;   // 进度对客户端无意义，且 stdout 已重定向
+    wparams.print_timestamps = !params.no_timestamps;
+    wparams.language         = params.language.c_str();
+    wparams.n_threads        = params.n_threads;
+    wparams.n_max_text_ctx   = params.max_context >= 0 ? params.max_context : wparams.n_max_text_ctx;
+    wparams.offset_ms        = params.offset_t_ms;
+    wparams.duration_ms      = params.duration_ms;
+    wparams.debug_mode       = params.debug_mode;
+    wparams.greedy.best_of        = params.best_of;
+    wparams.beam_search.beam_size = params.beam_size;
+    wparams.no_timestamps    = params.no_timestamps;
+
+    // sense_voice_full_parallel 收 double（同 HTTP 路径）
+    std::vector<double> pcmf64(pcmf32.size());
+    for (size_t i = 0; i < pcmf32.size(); ++i) {
+        pcmf64[i] = static_cast<double>(pcmf32[i]);
+    }
+
+    if (sense_voice_full_parallel(ctx, wparams, pcmf64, pcmf64.size(), params.n_processors) != 0) {
+        fprintf(stderr, "stdio: failed to process audio\n");
+        return "";
+    }
+
+    std::string results = sense_voice_get_output(ctx, true, params.use_itn, true);
+    // 与 main 里那份同样的模式。那个是 main 的局部变量，这里够不着，只能自带一份 ——
+    // 两处要一起改。剥的是 <|zh|><|NEUTRAL|> 这类语言/情感标记。
+    static const std::regex kSpecialTag("<\\|[^\\|]*\\|>");
+    results = std::regex_replace(results, kSpecialTag, "");
+    return results;
+}
+
+int stdio_main(struct sense_voice_context * ctx, sense_voice_params & params) {
+    // ⚠️ 把真正的 stdout 抢救出来，然后让所有 printf 改道 stderr。
+    // 这个文件与 sense-voice 库内部都有 printf/stdout 输出，而 stdio 模式下 stdout 就是
+    // 协议通道 —— 漏一行进 BEGIN..END 之间就会被客户端当成转写内容。逐个改挡不住库内部的，
+    // 从 fd 层面一次堵死。（与 myserver/server.cpp 的 stdio_main 同法。）
+    fflush(stdout);
+    const int proto_fd = SVSRV_DUP(fileno(stdout));
+    if (proto_fd < 0) { fprintf(stderr, "stdio: failed to dup stdout\n"); return 1; }
+    SVSRV_DUP2(fileno(stderr), fileno(stdout));
+    FILE * proto = fdopen(proto_fd, "w");
+    if (proto == nullptr) { fprintf(stderr, "stdio: failed to fdopen the saved stdout\n"); return 1; }
+
+    auto emit = [&](const std::string & line) {
+        fprintf(proto, "%s\n", line.c_str());
+        fflush(proto);
+    };
+
+    emit(STDIO_READY);
+
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();   // 容忍 CRLF
+        if (line.empty()) continue;
+        if (line == "quit") break;
+
+        // `<cmd>\t<wav>[\t<prompt>]`。prompt 收下但不用（见顶部注释）。
+        const size_t tab = line.find('\t');
+        const std::string cmd = tab == std::string::npos ? line : line.substr(0, tab);
+        std::string rest      = tab == std::string::npos ? ""   : line.substr(tab + 1);
+        const size_t tab2 = rest.find('\t');
+        if (tab2 != std::string::npos) rest = rest.substr(0, tab2);
+
+        std::string text;
+        if (cmd != STDIO_CMD) {
+            fprintf(stderr, "stdio: unsupported command: %s\n", cmd.c_str());
+        } else if (rest.empty()) {
+            fprintf(stderr, "stdio: missing wav path\n");
+        } else {
+            text = sv_stdio_transcribe(ctx, params, rest);
+        }
+
+        // 文本可能含换行；客户端会把 BEGIN..END 之间的行 join("\n") 后整体取用，所以原样发。
+        emit(STDIO_BEGIN);
+        if (!text.empty()) emit(text);
+        emit(STDIO_END);
+    }
+
+    fclose(proto);
+    return 0;
+}
+
 int main(int argc, char ** argv) {
     // 清理特殊标记，如 <|zh|>、<|HAPPY|>、<|Speech|>、<|withitn|> 等
     std::regex special_tag_regex("<\\|[^\\|]*\\|>");
@@ -475,6 +613,12 @@ int main(int argc, char ** argv) {
     }
 
     ctx->language_id = sense_voice_lang_id(params.language.c_str());
+
+    // --stdio：走行协议，整个 HTTP 服务器都不创建。放在模型加载**之后** ——
+    // READY 哨兵的语义是「模型已就绪」，客户端 StdioWhisper::new 会一直等到它。
+    if (sparams.stdio) {
+        return stdio_main(ctx, params);
+    }
 
     Server svr;
     svr.set_default_headers({{"Server", "whisper.cpp"},

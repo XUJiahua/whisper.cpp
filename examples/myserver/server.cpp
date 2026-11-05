@@ -434,8 +434,9 @@ const std::string STDIO_BEGIN = "__MTMD_BEGIN__";
 const std::string STDIO_END   = "__MTMD_END__";
 const std::string STDIO_CMD_SEGMENTS = "transcribe_segments";
 
-// 与 HTTP handler 里那段 wparams 设置逐字段对齐。刻意抽成独立函数而不是重构 handler：
-// HTTP 路径保持**零改动**，等价性才能靠「同一批音频两边输出逐字节一致」来证明。
+// Most inference settings match HTTP. Stdio honors max_len=0 (no character
+// wrapping), so live callers receive model paragraphs rather than display chunks.
+// Keep the HTTP handler and its legacy display-wrap default unchanged.
 whisper_full_params stdio_make_wparams(const whisper_params & params) {
     whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
 
@@ -454,7 +455,9 @@ whisper_full_params stdio_make_wparams(const whisper_params & params) {
     wparams.duration_ms      = params.duration_ms;
 
     wparams.thold_pt         = params.word_thold;
-    wparams.max_len          = params.max_len == 0 ? 60 : params.max_len;
+    // Preserve model paragraphs for streaming revisions. HTTP's display-wrap
+    // default must not become an early committed ASR boundary. Zero means off.
+    wparams.max_len          = params.max_len;
     wparams.split_on_word    = params.split_on_word;
     wparams.audio_ctx        = params.audio_ctx;
 
